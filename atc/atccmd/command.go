@@ -588,7 +588,7 @@ func (cmd *RunCommand) constructAPIMembers(
 	dbPipelineFactory := db.NewPipelineFactory(dbConn, lockFactory)
 	dbJobFactory := db.NewJobFactory(dbConn, lockFactory)
 	dbResourceFactory := db.NewResourceFactory(dbConn, lockFactory)
-	dbContainerRepository := db.NewContainerRepository(dbConn)
+	dbContainerRepository := db.NewContainerRepository(dbConn, lockFactory)
 	gcContainerDestroyer := gc.NewDestroyer(logger, dbContainerRepository, dbVolumeRepository)
 	dbBuildFactory := db.NewBuildFactory(dbConn, lockFactory, cmd.GC.OneOffBuildGracePeriod)
 	dbCheckFactory := db.NewCheckFactory(dbConn, lockFactory, secretManager, cmd.GlobalResourceCheckTimeout)
@@ -786,7 +786,7 @@ func (cmd *RunCommand) constructBackendMembers(
 
 	dbWorkerLifecycle := db.NewWorkerLifecycle(dbConn)
 	dbResourceCacheLifecycle := db.NewResourceCacheLifecycle(dbConn)
-	dbContainerRepository := db.NewContainerRepository(dbConn)
+	dbContainerRepository := db.NewContainerRepository(dbConn, lockFactory)
 	dbArtifactLifecycle := db.NewArtifactLifecycle(dbConn)
 	dbCheckLifecycle := db.NewCheckLifecycle(dbConn)
 	resourceConfigCheckSessionLifecycle := db.NewResourceConfigCheckSessionLifecycle(dbConn)
