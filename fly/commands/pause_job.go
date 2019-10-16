@@ -24,17 +24,14 @@ func (command *PauseJobCommand) Execute(args []string) error {
 		return err
 	}
 
-	team := command.TeamFlag.GetTeamTarget(target)
+	team := command.TeamTarget(target)
 	found, err := team.PauseJob(pipelineName, jobName)
 	if err != nil {
 		return err
 	}
 
 	if !found {
-		if command.Team == "" {
-			fmt.Println("hint: are you missing '--team' to specify the team for the build?")
-		}
-		return fmt.Errorf("%s/%s not found\n", pipelineName, jobName)
+		return fmt.Errorf("%s/%s not found on team %s\n", pipelineName, jobName, team)
 	}
 
 	fmt.Printf("paused '%s'\n", jobName)

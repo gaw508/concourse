@@ -90,7 +90,7 @@ type TeamFlag struct {
 	Team string `short:"n" long:"team-name" description:"Run command for specific team"`
 }
 
-func (t *TeamFlag) GetTeamTarget(target rc.Target) concourse.Team {
+func (t *TeamFlag) TeamTarget(target rc.Target) concourse.Team {
 	if t.Team != "" {
 		return target.Client().Team(t.Team)
 	}

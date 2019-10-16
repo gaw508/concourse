@@ -68,7 +68,7 @@ func (command *HijackCommand) Execute([]string) error {
 	var chosenContainer atc.Container
 
 	if command.Handle != "" {
-		team := command.TeamFlag.GetTeamTarget(target)
+		team := command.TeamTarget(target)
 		chosenContainer, err = team.GetContainer(command.Handle)
 		if err != nil {
 			displayhelpers.Failf("no containers matched the given handle id!\n\nthey may have expired if your build hasn't recently finished.")
@@ -199,7 +199,7 @@ func (command *HijackCommand) Execute([]string) error {
 
 		h := hijacker.New(target.TLSConfig(), reqGenerator, target.Token())
 
-		team := command.TeamFlag.GetTeamTarget(target)
+		team := command.TeamTarget(target)
 		return h.Hijack(team.Name(), chosenContainer.ID, spec, io)
 	}()
 
@@ -247,7 +247,7 @@ func (command *HijackCommand) getContainerFingerprintFromUrl(target rc.Target, u
 
 	team := urlMap["teams"]
 
-	teamName := command.TeamFlag.GetTeamTarget(target).Name()
+	teamName := command.TeamTarget(target).Name()
 	if team != teamName {
 		err = fmt.Errorf("Team in URL doesn't match the current team of the target")
 		return nil, err
@@ -305,7 +305,7 @@ func (command *HijackCommand) getContainerIDs(target rc.Target, fingerprint *con
 		return nil, err
 	}
 
-	team := command.TeamFlag.GetTeamTarget(target)
+	team := command.TeamTarget(target)
 	containers, err := team.ListContainers(reqValues)
 	if err != nil {
 		return nil, err

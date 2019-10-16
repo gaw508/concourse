@@ -33,12 +33,9 @@ func (command *TriggerJobCommand) Execute(args []string) error {
 	}
 
 	var build atc.Build
-	team := command.TeamFlag.GetTeamTarget(target)
+	team := command.TeamTarget(target)
 	build, err = team.CreateJobBuild(pipelineName, jobName)
 	if err != nil {
-		if command.Team == "" {
-			fmt.Println("hint: are you missing '--team' to specify the team for the build?")
-		}
 		return err
 	} else {
 		fmt.Printf("started %s/%s #%s\n", pipelineName, jobName, build.Name)

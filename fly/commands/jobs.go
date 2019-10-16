@@ -30,7 +30,7 @@ func (command *JobsCommand) Execute([]string) error {
 	}
 
 	var headers []string
-	team := command.TeamFlag.GetTeamTarget(target)
+	team := command.TeamTarget(target)
 
 	var jobs []atc.Job
 	jobs, err = team.ListJobs(pipelineName)
