@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"code.cloudfoundry.org/lager"
@@ -20,22 +21,38 @@ type (
 	}
 
 	NewRelicEmitter struct {
-		client     *http.Client
-		url        string
-		apikey     string
-		prefix     string
-		containers *stats
-		volumes    *stats
+		client      *http.Client
+		url         string
+		apikey      string
+		prefix      string
+		containers  *stats
+		volumes     *stats
+		compression bool
+		batchMode   bool
+		dataBuffer  *dataBuffer
 	}
 
 	NewRelicConfig struct {
-		AccountID     string `long:"newrelic-account-id" description:"New Relic Account ID"`
-		APIKey        string `long:"newrelic-api-key" description:"New Relic Insights API Key"`
-		ServicePrefix string `long:"newrelic-service-prefix" default:"" description:"An optional prefix for emitted New Relic events"`
+		AccountID          string `long:"newrelic-account-id" description:"New Relic Account ID"`
+		APIKey             string `long:"newrelic-api-key" description:"New Relic Insights API Key"`
+		ServicePrefix      string `long:"newrelic-service-prefix" default:"" description:"An optional prefix for emitted New Relic events"`
+		CompressionEnabled bool   `long:"newrelic-metric-compression" default:"false" description:"New Relic payload compression flag"`
+		BatchMode          bool   `long:"newrelic-metric-batch" default:"false" description:"New Relic payload batch emit flag"`
 	}
 
 	singlePayload map[string]interface{}
 	fullPayload   []singlePayload
+
+	BatchedEmitter interface {
+		metric.Emitter
+		Flush()
+	}
+
+	dataBuffer struct {
+		payloadQueue []fullPayload
+		lastEmitTime time.Time
+		dataLock     *sync.Mutex
+	}
 )
 
 func init() {
@@ -53,14 +70,26 @@ func (config *NewRelicConfig) NewEmitter() (metric.Emitter, error) {
 		Timeout:   time.Minute,
 	}
 
-	return &NewRelicEmitter{
-		client:     client,
-		url:        fmt.Sprintf("https://insights-collector.newrelic.com/v1/accounts/%s/events", config.AccountID),
-		apikey:     config.APIKey,
-		prefix:     config.ServicePrefix,
-		containers: new(stats),
-		volumes:    new(stats),
-	}, nil
+	emitter := &NewRelicEmitter{
+		client:      client,
+		url:         fmt.Sprintf("https://insights-collector.newrelic.com/v1/accounts/%s/events", config.AccountID),
+		apikey:      config.APIKey,
+		prefix:      config.ServicePrefix,
+		containers:  new(stats),
+		volumes:     new(stats),
+		compression: config.CompressionEnabled,
+		batchMode:   config.BatchMode,
+	}
+
+	// start a routine for data flush
+	if config.BatchMode {
+		go func() {
+			time.Sleep(30 * time.Second)
+			emitter.Flush()
+		}()
+	}
+
+	return emitter, nil
 }
 
 func (emitter *NewRelicEmitter) simplePayload(logger lager.Logger, event metric.Event, nameOverride string) singlePayload {
@@ -109,9 +138,21 @@ func (emitter *NewRelicEmitter) emitPayload(logger lager.Logger, payload fullPay
 	}
 
 	resp.Body.Close()
+	lastEmitTime = time.Now()
 }
 
 func (emitter *NewRelicEmitter) Emit(logger lager.Logger, event metric.Event) {
+	payload := emitter.payload(logger, event)
+	if emitter.batchMode {
+		enque(payload)
+	} else {
+		if len(payload) > 0 {
+			emitter.emitPayload(logger, payload)
+		}
+	}
+}
+
+func (emitter *NewRelicEmitter) payload(logger lager.Logger, event metric.Event) fullPayload {
 	payload := make(fullPayload, 0)
 
 	switch event.Name {
@@ -178,8 +219,14 @@ func (emitter *NewRelicEmitter) Emit(logger lager.Logger, event metric.Event) {
 		singlePayload["metric"] = event.Name
 		payload = append(payload, singlePayload)
 	}
+	return payload
+}
 
-	if len(payload) > 0 {
-		emitter.emitPayload(logger, payload)
-	}
+func (emitter *NewRelicEmitter) Flush() {
+}
+
+func (db *dataBuffer) enque(payload fullPayload) {
+}
+
+func (db *dataBuffer) flush() {
 }
