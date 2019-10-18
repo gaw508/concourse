@@ -39,7 +39,7 @@ type PrometheusEmitter struct {
 	pipelineScheduled *prometheus.CounterVec
 
 	resourceChecksVec *prometheus.CounterVec
-	checksVec         *prometheus.CounterVec
+	checksTotal       prometheus.Counter
 
 	schedulingFullDuration    *prometheus.CounterVec
 	schedulingLoadingDuration *prometheus.CounterVec
@@ -306,16 +306,14 @@ func (config *PrometheusConfig) NewEmitter() (metric.Emitter, error) {
 	)
 	prometheus.MustRegister(resourceChecksVec)
 
-	checksVec := prometheus.NewCounterVec(
+	checksTotal := prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "concourse",
 			Subsystem: "lidar",
 			Name:      "checks_total",
 			Help:      "Counts the number of checks finished",
-		},
-		[]string{"scopeID", "checkName"},
-	)
-	prometheus.MustRegister(checksVec)
+		})
+	prometheus.MustRegister(checksTotal)
 
 	listener, err := net.Listen("tcp", config.bind())
 	if err != nil {
@@ -346,7 +344,7 @@ func (config *PrometheusConfig) NewEmitter() (metric.Emitter, error) {
 		pipelineScheduled: pipelineScheduled,
 
 		resourceChecksVec: resourceChecksVec,
-		checksVec:         checksVec,
+		checksTotal:       checksTotal,
 
 		schedulingFullDuration:    schedulingFullDuration,
 		schedulingLoadingDuration: schedulingLoadingDuration,
@@ -707,18 +705,7 @@ func (emitter *PrometheusEmitter) resourceMetric(logger lager.Logger, event metr
 }
 
 func (emitter *PrometheusEmitter) checkMetric(logger lager.Logger, event metric.Event) {
-	scopeID, exists := event.Attributes["scope_id"]
-	if !exists {
-		logger.Error("failed-to-find-resource-config-scope-id-in-event", fmt.Errorf("expected scope_id to exist in event.Attributes"))
-		return
-	}
-	checkName, exists := event.Attributes["check_name"]
-	if !exists {
-		logger.Error("failed-to-find-check-name-in-event", fmt.Errorf("expected check_name to exist in event.Attributes"))
-		return
-	}
-
-	emitter.checksVec.WithLabelValues(scopeID, checkName).Inc()
+	emitter.checksTotal.Inc()
 }
 
 // updateLastSeen tracks for each worker when it last received a metric event.
