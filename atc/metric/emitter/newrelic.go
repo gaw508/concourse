@@ -1,9 +1,14 @@
 package emitter
 
 import (
+	"bufio"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"github.com/concourse/flag"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,7 +18,7 @@ import (
 	"github.com/concourse/concourse/atc/metric"
 	"github.com/pkg/errors"
 )
-
+const NEWRELIC_PAYLOAD_MAX_SIZE = 1024*1024
 type (
 	stats struct {
 		created interface{}
@@ -28,29 +33,29 @@ type (
 		containers  *stats
 		volumes     *stats
 		compression bool
-		batchMode   bool
-		dataBuffer  *dataBuffer
+		batchBuffer  *batchBuffer
 	}
 
 	NewRelicConfig struct {
 		AccountID          string `long:"newrelic-account-id" description:"New Relic Account ID"`
 		APIKey             string `long:"newrelic-api-key" description:"New Relic Insights API Key"`
 		ServicePrefix      string `long:"newrelic-service-prefix" default:"" description:"An optional prefix for emitted New Relic events"`
-		CompressionEnabled bool   `long:"newrelic-metric-compression" default:"false" description:"New Relic payload compression flag"`
-		BatchMode          bool   `long:"newrelic-metric-batch" default:"false" description:"New Relic payload batch emit flag"`
+		CompressionEnabled bool   `long:"newrelic-metric-compression" description:"New Relic payload compression flag"`
 	}
 
 	singlePayload map[string]interface{}
 	fullPayload   []singlePayload
+	batchPayload  []fullPayload
 
-	BatchedEmitter interface {
+	BatchEmitter interface {
 		metric.Emitter
-		Flush()
+		Flush(logger lager.Logger)
 	}
 
-	dataBuffer struct {
-		payloadQueue []fullPayload
-		lastEmitTime time.Time
+	batchBuffer struct {
+		payloadQueue batchPayload
+		lastUpdateTime time.Time
+		compressed bool
 		dataLock     *sync.Mutex
 	}
 )
@@ -78,16 +83,18 @@ func (config *NewRelicConfig) NewEmitter() (metric.Emitter, error) {
 		containers:  new(stats),
 		volumes:     new(stats),
 		compression: config.CompressionEnabled,
-		batchMode:   config.BatchMode,
+		batchBuffer: &batchBuffer{compressed: config.CompressionEnabled, dataLock: new(sync.Mutex)},
 	}
 
 	// start a routine for data flush
-	if config.BatchMode {
-		go func() {
+	// if the buffer is not full for a specific time, flush the buffer to emit
+	logger, _ := flag.Lager{LogLevel:"debug"}.Logger("newrelic-batch-flush")
+	go func() {
+		for {
 			time.Sleep(30 * time.Second)
-			emitter.Flush()
-		}()
-	}
+			emitter.Flush(logger)
+		}
+	}()
 
 	return emitter, nil
 }
@@ -136,19 +143,58 @@ func (emitter *NewRelicEmitter) emitPayload(logger lager.Logger, payload fullPay
 			errors.Wrap(metric.ErrFailedToEmit, err.Error()))
 		return
 	}
-
 	resp.Body.Close()
-	lastEmitTime = time.Now()
+}
+
+func (emitter *NewRelicEmitter) emitBatch(logger lager.Logger, payload batchPayload) {
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		logger.Error("failed-to-serialize-payload", err)
+		return
+	}
+
+	var payloadReader io.Reader
+	if emitter.compression {
+		payloadReader, err = gZipBuffer(payloadJSON)
+		if err != nil {
+			logger.Error("failed-to-zip-payload", errors.Wrap(metric.ErrFailedToEmit, err.Error()))
+			return
+		}
+
+	} else {
+		payloadReader = bytes.NewBuffer(payloadJSON)
+	}
+
+	req, err := http.NewRequest("POST", emitter.url, payloadReader)
+	if err != nil {
+		logger.Error("failed-to-construct-request", err)
+	}
+
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("X-Insert-Key", emitter.apikey)
+	if emitter.compression {
+		req.Header.Add("Content-Encoding", "gzip")
+	}
+
+	resp, err := emitter.client.Do(req)
+
+	if err != nil {
+		logger.Error("failed-to-send-request",
+			errors.Wrap(metric.ErrFailedToEmit, err.Error()))
+		return
+	}
+	resp.Body.Close()
 }
 
 func (emitter *NewRelicEmitter) Emit(logger lager.Logger, event metric.Event) {
 	payload := emitter.payload(logger, event)
-	if emitter.batchMode {
-		enque(payload)
-	} else {
-		if len(payload) > 0 {
-			emitter.emitPayload(logger, payload)
-		}
+
+	batchPayload := emitter.batchBuffer.enqueque(logger, payload)
+	// check the buffer size (should less then 1 MB)
+	if batchPayload != nil {
+		//emit the batch payload now
+		emitter.emitBatch(logger, batchPayload)
+		emitter.batchBuffer.lastUpdateTime = time.Now()
 	}
 }
 
@@ -222,11 +268,84 @@ func (emitter *NewRelicEmitter) payload(logger lager.Logger, event metric.Event)
 	return payload
 }
 
-func (emitter *NewRelicEmitter) Flush() {
+func (emitter *NewRelicEmitter) Flush(logger lager.Logger) {
+	//check the lastupdatetime, if it is greate > 5 mins, then do the flush()
+	if time.Now().Sub(emitter.batchBuffer.lastUpdateTime) > 2 * time.Minute {
+		batchPayload := emitter.batchBuffer.flush()
+		emitter.emitBatch(logger, batchPayload)
+		emitter.batchBuffer.lastUpdateTime = time.Now()
+	}
 }
 
-func (db *dataBuffer) enque(payload fullPayload) {
+func (db *batchBuffer) enqueque(logger lager.Logger, payload fullPayload) batchPayload {
+	//enque the current payload.
+	// if it exceeds the max limit(1Mb), return the existed payload, and enque the current payload
+	// lock and unlock should be applied.
+	var buff batchPayload
+	db.dataLock.Lock()
+	defer db.dataLock.Unlock()
+	tempBuff := append(db.payloadQueue, payload)
+	payloadJSON, err := json.Marshal(tempBuff)
+	if err != nil {
+		logger.Error("failed-to-serialize-payload", err)
+		return nil
+	}
+	var payloadSize int
+	if db.compressed {
+		zippedBuffer, err := gZipBuffer(payloadJSON)
+		if err != nil {
+			logger.Error("failed-to-gzip-payload", err)
+			return nil
+		}
+
+		for {
+			zipedData, err := ioutil.ReadAll(zippedBuffer)
+			payloadSize = payloadSize + len(zipedData)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				logger.Error("failed-to-use-gzip-buffer-payload", err)
+				return nil
+			}
+		}
+	} else {
+		payloadSize = len(payloadJSON)
+	}
+
+	if payloadSize > NEWRELIC_PAYLOAD_MAX_SIZE {
+		buff = db.payloadQueue
+		db.payloadQueue = []fullPayload{payload}
+	} else {
+		db.payloadQueue = tempBuff
+	}
+	return buff
 }
 
-func (db *dataBuffer) flush() {
+func (db *batchBuffer) flush() batchPayload {
+	db.dataLock.Lock()
+	buff := db.payloadQueue
+	db.payloadQueue = nil
+	db.dataLock.Unlock()
+	return buff
+}
+
+func gZipBuffer(body []byte) (io.Reader, error) {
+	var err error
+
+	readBuffer := bufio.NewReader(bytes.NewReader(body))
+	buffer := bytes.NewBuffer([]byte{})
+	writer := gzip.NewWriter(buffer)
+
+	_, err = readBuffer.WriteTo(writer)
+	if err != nil {
+		return nil, err
+	}
+
+	err = writer.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	return buffer, nil
 }
