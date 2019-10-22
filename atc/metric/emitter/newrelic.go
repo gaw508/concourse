@@ -109,6 +109,16 @@ func (config *NewRelicConfig) NewEmitter() (metric.Emitter, error) {
 	return emitter, nil
 }
 
+func (emitter *NewRelicEmitter) setClient(client *http.Client) *NewRelicEmitter {
+	emitter.client = client
+	return emitter
+}
+
+func (emitter *NewRelicEmitter) setEmitUrl(url string) *NewRelicEmitter {
+	emitter.url = url
+	return emitter
+}
+
 func (emitter *NewRelicEmitter) simplePayload(logger lager.Logger, event metric.Event, nameOverride string) singlePayload {
 	name := nameOverride
 	if name == "" {
