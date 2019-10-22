@@ -18,7 +18,11 @@ import (
 	"github.com/concourse/concourse/atc/metric"
 	"github.com/pkg/errors"
 )
-const NEWRELIC_PAYLOAD_MAX_SIZE = 1024*1024
+const (
+	NEWRELIC_PAYLOAD_MAX_SIZE = 1024*1024
+	NEWRELIC_FLUSH_CHECK_INTERVAL_IN_SEC = 30
+)
+
 type (
 	stats struct {
 		created interface{}
@@ -41,6 +45,8 @@ type (
 		APIKey             string `long:"newrelic-api-key" description:"New Relic Insights API Key"`
 		ServicePrefix      string `long:"newrelic-service-prefix" default:"" description:"An optional prefix for emitted New Relic events"`
 		CompressionEnabled bool   `long:"newrelic-metric-compression" description:"New Relic payload compression flag"`
+		FlushInterval int `long:"newrelic-flush-interval" default:"60" description:"New Relic metric flush interval in seconds"`
+
 	}
 
 	singlePayload map[string]interface{}
@@ -57,6 +63,7 @@ type (
 		lastUpdateTime time.Time
 		compressed bool
 		dataLock     *sync.Mutex
+		flushInterval int
 	}
 )
 
@@ -83,7 +90,10 @@ func (config *NewRelicConfig) NewEmitter() (metric.Emitter, error) {
 		containers:  new(stats),
 		volumes:     new(stats),
 		compression: config.CompressionEnabled,
-		batchBuffer: &batchBuffer{compressed: config.CompressionEnabled, dataLock: new(sync.Mutex)},
+		batchBuffer: &batchBuffer{compressed: config.CompressionEnabled,
+			dataLock: new(sync.Mutex),
+			flushInterval:config.FlushInterval,
+		},
 	}
 
 	// start a routine for data flush
@@ -91,7 +101,7 @@ func (config *NewRelicConfig) NewEmitter() (metric.Emitter, error) {
 	logger, _ := flag.Lager{LogLevel:"debug"}.Logger("newrelic-batch-flush")
 	go func() {
 		for {
-			time.Sleep(30 * time.Second)
+			time.Sleep(NEWRELIC_FLUSH_CHECK_INTERVAL_IN_SEC * time.Second)
 			emitter.Flush(logger)
 		}
 	}()
@@ -184,6 +194,7 @@ func (emitter *NewRelicEmitter) emitBatch(logger lager.Logger, payload batchPayl
 		return
 	}
 	resp.Body.Close()
+	emitter.batchBuffer.updateLastTime()
 }
 
 func (emitter *NewRelicEmitter) Emit(logger lager.Logger, event metric.Event) {
@@ -194,7 +205,6 @@ func (emitter *NewRelicEmitter) Emit(logger lager.Logger, event metric.Event) {
 	if batchPayload != nil {
 		//emit the batch payload now
 		emitter.emitBatch(logger, batchPayload)
-		emitter.batchBuffer.lastUpdateTime = time.Now()
 	}
 }
 
@@ -269,11 +279,11 @@ func (emitter *NewRelicEmitter) payload(logger lager.Logger, event metric.Event)
 }
 
 func (emitter *NewRelicEmitter) Flush(logger lager.Logger) {
-	//check the lastupdatetime, if it is greate > 5 mins, then do the flush()
-	if time.Now().Sub(emitter.batchBuffer.lastUpdateTime) > 2 * time.Minute {
+	if emitter.batchBuffer.flushThreshold() {
 		batchPayload := emitter.batchBuffer.flush()
-		emitter.emitBatch(logger, batchPayload)
-		emitter.batchBuffer.lastUpdateTime = time.Now()
+		if batchPayload != nil && len(batchPayload) > 0 {
+			emitter.emitBatch(logger, batchPayload)
+		}
 	}
 }
 
@@ -328,6 +338,14 @@ func (db *batchBuffer) flush() batchPayload {
 	db.payloadQueue = nil
 	db.dataLock.Unlock()
 	return buff
+}
+
+func (db *batchBuffer) updateLastTime() {
+	db.lastUpdateTime = time.Now()
+}
+
+func (db *batchBuffer) flushThreshold () bool {
+	return time.Now().Sub(db.lastUpdateTime) > time.Duration(db.flushInterval) * time.Second
 }
 
 func gZipBuffer(body []byte) (io.Reader, error) {
