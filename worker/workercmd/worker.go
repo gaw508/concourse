@@ -98,7 +98,7 @@ func (cmd *WorkerCommand) Runner(args []string) (ifrit.Runner, error) {
 
 	beaconRunner := worker.NewBeaconRunner(
 		logger.Session("beacon-runner"),
-		tsaClient,
+		&tsaClient,
 		cmd.RebalanceInterval,
 		cmd.ConnectionDrainTimeout,
 		cmd.gardenAddr(),
