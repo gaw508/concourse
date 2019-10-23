@@ -44,7 +44,7 @@ var _ = Describe("DBProvider", func() {
 		provider                          WorkerProvider
 		baggageclaimResponseHeaderTimeout time.Duration
 
-		fakeFetcher *workerfakes.FakeFetcher
+		fakeFetcher                         *workerfakes.FakeFetcher
 		fakeImageFactory                    *workerfakes.FakeImageFactory
 		fakeImageFetchingDelegate           *workerfakes.FakeImageFetchingDelegate
 		fakeDBVolumeRepository              *dbfakes.FakeVolumeRepository
