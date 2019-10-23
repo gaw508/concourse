@@ -10,7 +10,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 )
 
-func (runner *migrations) Up_1528470872() error {
+func (runner *migrations) Up_1528470872(db *sql.DB) error {
 
 	type team struct {
 		id    int64
@@ -19,7 +19,7 @@ func (runner *migrations) Up_1528470872() error {
 		nonce sql.NullString
 	}
 
-	tx, err := runner.DB.Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}

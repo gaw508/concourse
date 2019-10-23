@@ -8,7 +8,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 )
 
-func (runner *migrations) Down_1516643303() error {
+func (runner *migrations) Down_1516643303(db *sql.DB) error {
 
 	type team struct {
 		id    int64
@@ -16,7 +16,7 @@ func (runner *migrations) Down_1516643303() error {
 		nonce sql.NullString
 	}
 
-	tx, err := runner.DB.Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}

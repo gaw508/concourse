@@ -47,7 +47,7 @@ require (
 	github.com/concourse/flag v1.0.0
 	github.com/concourse/go-archive v1.0.1
 	github.com/concourse/retryhttp v1.0.2
-	github.com/concourse/voyager v0.0.0-20190410193052-a7f228ba98c5
+	github.com/concourse/voyager v0.0.0-20190926144334-d8b352dfbb76
 	github.com/containerd/continuity v0.0.0-20180919190352-508d86ade3c2 // indirect
 	github.com/coreos/bbolt v1.3.2 // indirect
 	github.com/coreos/etcd v3.3.15+incompatible // indirect
@@ -133,7 +133,7 @@ require (
 	github.com/keybase/go-crypto v0.0.0-20180920171116-0b2a91ace448 // indirect
 	github.com/kr/pty v1.1.8
 	github.com/krishicks/yaml-patch v0.0.10
-	github.com/lib/pq v1.0.0
+	github.com/lib/pq v1.2.0
 	github.com/mattbaird/elastigo v0.0.0-20170123220020-2fe47fd29e4b // indirect
 	github.com/mattn/go-colorable v0.1.1
 	github.com/mattn/go-isatty v0.0.7

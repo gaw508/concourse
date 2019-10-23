@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 )
 
-func (runner *migrations) Down_1550160079() error {
+func (runner *migrations) Down_1550160079(db *sql.DB) error {
 
 	type build struct {
 		id    int
@@ -13,7 +13,7 @@ func (runner *migrations) Down_1550160079() error {
 		nonce sql.NullString
 	}
 
-	tx, err := runner.DB.Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}

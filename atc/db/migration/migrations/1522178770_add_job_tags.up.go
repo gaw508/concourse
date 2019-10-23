@@ -18,8 +18,8 @@ type Pipeline struct {
 	Groups GroupConfigs
 }
 
-func (runner *migrations) Up_1522178770() error {
-	tx, err := runner.DB.Begin()
+func (runner *migrations) Up_1522178770(db *sql.DB) error {
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}

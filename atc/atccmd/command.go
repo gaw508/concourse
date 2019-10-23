@@ -207,6 +207,7 @@ type RunCommand struct {
 var HelpError = errors.New("must specify one of `--current-db-version`, `--supported-db-version`, or `--migrate-db-to-version`")
 
 type Migration struct {
+	Logger             flag.Lager
 	Postgres           flag.PostgresConfig `group:"PostgreSQL Configuration" namespace:"postgres"`
 	EncryptionKey      flag.Cipher         `long:"encryption-key"     description:"A 16 or 32 length key used to encrypt sensitive information before storing it in the database."`
 	CurrentDBVersion   bool                `long:"current-db-version" description:"Print the current database version and exit"`
@@ -215,19 +216,20 @@ type Migration struct {
 }
 
 func (m *Migration) Execute(args []string) error {
+	logger, _ := m.Logger.Logger("migrations")
 	if m.CurrentDBVersion {
-		return m.currentDBVersion()
+		return m.currentDBVersion(logger)
 	}
 	if m.SupportedDBVersion {
-		return m.supportedDBVersion()
+		return m.supportedDBVersion(logger)
 	}
 	if m.MigrateDBToVersion > 0 {
-		return m.migrateDBToVersion()
+		return m.migrateDBToVersion(logger)
 	}
 	return HelpError
 }
 
-func (cmd *Migration) currentDBVersion() error {
+func (cmd *Migration) currentDBVersion(logger lager.Logger) error {
 	helper := migration.NewOpenHelper(
 		defaultDriverName,
 		cmd.Postgres.ConnectionString(),
@@ -235,7 +237,7 @@ func (cmd *Migration) currentDBVersion() error {
 		encryption.NewNoEncryption(),
 	)
 
-	version, err := helper.CurrentVersion()
+	version, err := helper.CurrentVersion(logger)
 	if err != nil {
 		return err
 	}
@@ -244,7 +246,7 @@ func (cmd *Migration) currentDBVersion() error {
 	return nil
 }
 
-func (cmd *Migration) supportedDBVersion() error {
+func (cmd *Migration) supportedDBVersion(logger lager.Logger) error {
 	helper := migration.NewOpenHelper(
 		defaultDriverName,
 		cmd.Postgres.ConnectionString(),
@@ -252,7 +254,7 @@ func (cmd *Migration) supportedDBVersion() error {
 		encryption.NewNoEncryption(),
 	)
 
-	version, err := helper.SupportedVersion()
+	version, err := helper.SupportedVersion(logger)
 	if err != nil {
 		return err
 	}
@@ -261,7 +263,7 @@ func (cmd *Migration) supportedDBVersion() error {
 	return nil
 }
 
-func (cmd *Migration) migrateDBToVersion() error {
+func (cmd *Migration) migrateDBToVersion(logger lager.Logger) error {
 	version := cmd.MigrateDBToVersion
 
 	var newKey *encryption.Key
@@ -283,7 +285,7 @@ func (cmd *Migration) migrateDBToVersion() error {
 		strategy,
 	)
 
-	err := helper.MigrateToVersion(version)
+	err := helper.MigrateToVersion(logger, version)
 	if err != nil {
 		return fmt.Errorf("Could not migrate to version: %d Reason: %s", version, err.Error())
 	}

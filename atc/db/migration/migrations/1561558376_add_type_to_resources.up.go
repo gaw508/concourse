@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 )
 
-func (self *migrations) Up_1561558376() error {
+func (self *migrations) Up_1561558376(db *sql.DB) error {
 	type resource struct {
 		id     int
 		config string
 		nonce  sql.NullString
 	}
 
-	tx, err := self.DB.Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}

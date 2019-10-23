@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	"code.cloudfoundry.org/lager"
+	"code.cloudfoundry.org/lager/lagertest"
 
 	"github.com/concourse/concourse/atc/db/encryption"
 	"github.com/concourse/concourse/atc/db/lock"
@@ -26,6 +27,7 @@ var _ = Describe("OpenHelper", func() {
 	)
 
 	JustBeforeEach(func() {
+		logger := lagertest.NewTestLogger()
 		db, err = sql.Open("postgres", postgresRunner.DataSourceName())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -34,7 +36,7 @@ var _ = Describe("OpenHelper", func() {
 
 		lockFactory = lock.NewLockFactory(lockDB, fakeLogFunc, fakeLogFunc)
 		strategy = encryption.NewNoEncryption()
-		openHelper = migration.NewOpenHelper("postgres", postgresRunner.DataSourceName(), lockFactory, strategy)
+		openHelper = migration.NewOpenHelper(logger, "postgres", postgresRunner.DataSourceName(), lockFactory, strategy)
 
 		bindata = new(migrationfakes.FakeBindata)
 		bindata.AssetStub = asset

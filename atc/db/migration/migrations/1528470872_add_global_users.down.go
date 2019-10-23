@@ -1,12 +1,13 @@
 package migrations
 
 import (
+	"database/sql"
 	"errors"
 )
 
-func (runner *migrations) Down_1528470872() error {
+func (runner *migrations) Down_1528470872(db *sql.DB) error {
 	var count int
-	err := runner.DB.QueryRow("SELECT count(*) FROM teams WHERE legacy_auth IS NULL AND name != 'main'").Scan(&count)
+	err := db.QueryRow("SELECT count(*) FROM teams WHERE legacy_auth IS NULL AND name != 'main'").Scan(&count)
 	if err != nil {
 		return err
 	}
@@ -15,7 +16,7 @@ func (runner *migrations) Down_1528470872() error {
 		return errors.New("Changes have been made to the teams table since the 'global users' upgrade. There is no turning back.")
 	}
 
-	tx, err := runner.DB.Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}

@@ -23,8 +23,8 @@ type Params map[string]interface{}
 
 type Version map[string]string
 
-func (self *migrations) Down_1537546150() error {
-	tx, err := self.DB.Begin()
+func (self *migrations) Down_1537546150(db *sql.DB) error {
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}

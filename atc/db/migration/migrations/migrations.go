@@ -7,18 +7,17 @@ import (
 	"github.com/concourse/concourse/atc/db/encryption"
 )
 
-func NewEncryptedGoMigrationRunner(db *sql.DB, es encryption.Strategy) *migrations {
-	return &migrations{db, es}
+func NewEncryptedGoMigrationRunner(es encryption.Strategy) *migrations {
+	return &migrations{es}
 }
 
 type migrations struct {
-	*sql.DB
 	encryption.Strategy
 }
 
-func (runner *migrations) RunDatabaseMigration(name string) error {
+func (runner *migrations) Run(db *sql.DB, name string) error {
 
-	res := reflect.ValueOf(runner).MethodByName(name).Call(nil)
+	res := reflect.ValueOf(runner).MethodByName(name).Call([]reflect.Value{reflect.ValueOf(db)})
 
 	ret := res[0].Interface()
 
