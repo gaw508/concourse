@@ -2,7 +2,7 @@ package emitter
 
 import (
 	"code.cloudfoundry.org/lager"
-	"fmt"
+
 	"github.com/concourse/concourse/atc/metric"
 	"github.com/concourse/flag"
 	. "github.com/onsi/ginkgo"
@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-var _ = FDescribe("newrelic metric", func() {
+var _ = Describe("newrelic metric", func() {
 	OKResponse := `{"success":true,"uuid":"12345678-1234-5678-9012-123456789012"}`
 	var (
 		newrelicServer *ghttp.Server
@@ -26,11 +26,7 @@ var _ = FDescribe("newrelic metric", func() {
 		newrelicServer.AppendHandlers(ghttp.CombineHandlers(
 			ghttp.VerifyRequest("POST", "/EVENTS"),
 			ghttp.RespondWithJSONEncoded(200, OKResponse),
-			),
-			ghttp.CombineHandlers(
-				ghttp.VerifyRequest("POST", "/EVENTS"),
-				ghttp.RespondWithJSONEncoded(200, OKResponse),
-			))
+		))
 		newrelicConfig = &NewRelicConfig{
 			AccountID:          "ACCOUNT-1",
 			APIKey:             "INSERT-API-KEY-1",
@@ -55,7 +51,7 @@ var _ = FDescribe("newrelic metric", func() {
 
 	})
 	Context("when batch buffer is less than 1MB", func() {
-		It("enqueque to the batch buffer", func() {
+		It("enqueue to the batch buffer", func() {
 			emitter.Emit(logger, metric.Event{
 				Name:  "build started",
 				Value: "",
@@ -65,7 +61,7 @@ var _ = FDescribe("newrelic metric", func() {
 			})
 
 			if newrelicEmitter, OK := emitter.(*NewRelicEmitter); OK {
-				Expect(newrelicEmitter.batchBuffer.payloadQueue).To(HaveLen(1))
+				Expect(newrelicEmitter.batchBuffer.payloadQueue).To(HaveLen(101))
 			}
 		})
 	})
@@ -78,7 +74,8 @@ var _ = FDescribe("newrelic metric", func() {
 				Fail("failed to convert the emitter to NewRelicEmitter")
 			}
 		})
-		It("emit the existed metrics, enqueque the current metric", func() {
+
+		It("emit the existed metrics, enqueue the current metric", func() {
 			for i := 0; i < 5000; i++ {
 				emitter.Emit(logger, metric.Event{
 					Name:  "build started",

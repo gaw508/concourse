@@ -18,8 +18,9 @@ import (
 	"github.com/concourse/concourse/atc/metric"
 	"github.com/pkg/errors"
 )
+
 const (
-	NEWRELIC_PAYLOAD_MAX_SIZE = 1024*1024
+	NEWRELIC_PAYLOAD_MAX_SIZE            = 1024 * 1024
 	NEWRELIC_FLUSH_CHECK_INTERVAL_IN_SEC = 30
 )
 
@@ -37,7 +38,7 @@ type (
 		containers  *stats
 		volumes     *stats
 		compression bool
-		batchBuffer  *batchBuffer
+		batchBuffer *batchBuffer
 	}
 
 	NewRelicConfig struct {
@@ -45,13 +46,12 @@ type (
 		APIKey             string `long:"newrelic-api-key" description:"New Relic Insights API Key"`
 		ServicePrefix      string `long:"newrelic-service-prefix" default:"" description:"An optional prefix for emitted New Relic events"`
 		CompressionEnabled bool   `long:"newrelic-metric-compression" description:"New Relic payload compression flag"`
-		FlushInterval int `long:"newrelic-flush-interval" default:"60" description:"New Relic metric flush interval in seconds"`
-
+		FlushInterval      int    `long:"newrelic-flush-interval" default:"60" description:"New Relic metric flush interval in seconds"`
 	}
 
 	singlePayload map[string]interface{}
 	fullPayload   []singlePayload
-	batchPayload  []fullPayload
+	batchPayload  []byte
 
 	BatchEmitter interface {
 		metric.Emitter
@@ -59,11 +59,11 @@ type (
 	}
 
 	batchBuffer struct {
-		payloadQueue batchPayload
+		payloadQueue   batchPayload
 		lastUpdateTime time.Time
-		compressed bool
-		dataLock     *sync.Mutex
-		flushInterval int
+		compressed     bool
+		dataLock       *sync.Mutex
+		flushInterval  int
 	}
 )
 
@@ -91,14 +91,14 @@ func (config *NewRelicConfig) NewEmitter() (metric.Emitter, error) {
 		volumes:     new(stats),
 		compression: config.CompressionEnabled,
 		batchBuffer: &batchBuffer{compressed: config.CompressionEnabled,
-			dataLock: new(sync.Mutex),
-			flushInterval:config.FlushInterval,
+			dataLock:      new(sync.Mutex),
+			flushInterval: config.FlushInterval,
 		},
 	}
 
 	// start a routine for data flush
 	// if the buffer is not full for a specific time, flush the buffer to emit
-	logger, _ := flag.Lager{LogLevel:"debug"}.Logger("newrelic-batch-flush")
+	logger, _ := flag.Lager{LogLevel: "debug"}.Logger("newrelic-batch-flush")
 	go func() {
 		for {
 			time.Sleep(NEWRELIC_FLUSH_CHECK_INTERVAL_IN_SEC * time.Second)
@@ -141,48 +141,22 @@ func (emitter *NewRelicEmitter) simplePayload(logger lager.Logger, event metric.
 	return payload
 }
 
-func (emitter *NewRelicEmitter) emitPayload(logger lager.Logger, payload fullPayload) {
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		logger.Error("failed-to-serialize-payload", err)
-		return
-	}
-
-	req, err := http.NewRequest("POST", emitter.url, bytes.NewBuffer(payloadJSON))
-	if err != nil {
-		logger.Error("failed-to-construct-request", err)
-	}
-
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("X-Insert-Key", emitter.apikey)
-
-	resp, err := emitter.client.Do(req)
-
-	if err != nil {
-		logger.Error("failed-to-send-request",
-			errors.Wrap(metric.ErrFailedToEmit, err.Error()))
-		return
-	}
-	resp.Body.Close()
-}
-
 func (emitter *NewRelicEmitter) emitBatch(logger lager.Logger, payload batchPayload) {
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		logger.Error("failed-to-serialize-payload", err)
-		return
-	}
+	var (
+		payloadReader io.Reader
+		err           error
+	)
 
-	var payloadReader io.Reader
+	payload = append(append([]byte{'['}, payload...), ']')
+
 	if emitter.compression {
-		payloadReader, err = gZipBuffer(payloadJSON)
+		payloadReader, err = gZipBuffer(payload)
 		if err != nil {
 			logger.Error("failed-to-zip-payload", errors.Wrap(metric.ErrFailedToEmit, err.Error()))
 			return
 		}
-
 	} else {
-		payloadReader = bytes.NewBuffer(payloadJSON)
+		payloadReader = bytes.NewBuffer(payload)
 	}
 
 	req, err := http.NewRequest("POST", emitter.url, payloadReader)
@@ -203,6 +177,7 @@ func (emitter *NewRelicEmitter) emitBatch(logger lager.Logger, payload batchPayl
 			errors.Wrap(metric.ErrFailedToEmit, err.Error()))
 		return
 	}
+	
 	resp.Body.Close()
 	emitter.batchBuffer.updateLastTime()
 }
@@ -210,7 +185,7 @@ func (emitter *NewRelicEmitter) emitBatch(logger lager.Logger, payload batchPayl
 func (emitter *NewRelicEmitter) Emit(logger lager.Logger, event metric.Event) {
 	payload := emitter.payload(logger, event)
 
-	batchPayload := emitter.batchBuffer.enqueque(logger, payload)
+	batchPayload := emitter.batchBuffer.enqueue(logger, payload)
 	// check the buffer size (should less then 1 MB)
 	if batchPayload != nil {
 		//emit the batch payload now
@@ -297,22 +272,32 @@ func (emitter *NewRelicEmitter) Flush(logger lager.Logger) {
 	}
 }
 
-func (db *batchBuffer) enqueque(logger lager.Logger, payload fullPayload) batchPayload {
-	//enque the current payload.
-	// if it exceeds the max limit(1Mb), return the existed payload, and enque the current payload
+func (db *batchBuffer) enqueue(logger lager.Logger, payload fullPayload) batchPayload {
+	// enqueue the current payload.
+	// if it exceeds the max limit(1Mb), return the existed payload, and enqueue the current payload
 	// lock and unlock should be applied.
-	var buff batchPayload
-	db.dataLock.Lock()
-	defer db.dataLock.Unlock()
-	tempBuff := append(db.payloadQueue, payload)
-	payloadJSON, err := json.Marshal(tempBuff)
+	newPayloadData, err := json.Marshal(payload)
 	if err != nil {
-		logger.Error("failed-to-serialize-payload", err)
+		logger.Error("failed-to-serialize-new-payload", err)
 		return nil
 	}
+
+	var (
+		tempBuff []byte
+		buff     batchPayload
+	)
+
+	if len(db.payloadQueue) != 0 {
+		tempBuff = append(db.payloadQueue, ',')
+	}
+	tempBuff = append(tempBuff, newPayloadData...)
+
+	db.dataLock.Lock()
+	defer db.dataLock.Unlock()
+
 	var payloadSize int
 	if db.compressed {
-		zippedBuffer, err := gZipBuffer(payloadJSON)
+		zippedBuffer, err := gZipBuffer(tempBuff)
 		if err != nil {
 			logger.Error("failed-to-gzip-payload", err)
 			return nil
@@ -330,12 +315,12 @@ func (db *batchBuffer) enqueque(logger lager.Logger, payload fullPayload) batchP
 			}
 		}
 	} else {
-		payloadSize = len(payloadJSON)
+		payloadSize = len(tempBuff)
 	}
 
-	if payloadSize > NEWRELIC_PAYLOAD_MAX_SIZE {
+	if payloadSize > NEWRELIC_PAYLOAD_MAX_SIZE-2 { // consider '[' and ']' for the json payload
 		buff = db.payloadQueue
-		db.payloadQueue = []fullPayload{payload}
+		db.payloadQueue = newPayloadData
 	} else {
 		db.payloadQueue = tempBuff
 	}
@@ -354,8 +339,8 @@ func (db *batchBuffer) updateLastTime() {
 	db.lastUpdateTime = time.Now()
 }
 
-func (db *batchBuffer) flushThreshold () bool {
-	return time.Now().Sub(db.lastUpdateTime) > time.Duration(db.flushInterval) * time.Second
+func (db *batchBuffer) flushThreshold() bool {
+	return time.Now().Sub(db.lastUpdateTime) > time.Duration(db.flushInterval)*time.Second
 }
 
 func gZipBuffer(body []byte) (io.Reader, error) {
